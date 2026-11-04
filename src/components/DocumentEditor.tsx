@@ -38,6 +38,7 @@ export function DocumentEditor({ record, initialType }: Props) {
   const [problems, setProblems] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
+  const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [recentItems, setRecentItems] = useState<{ description: string; unitPriceCents: number }[]>([]);
   const companyName = useCompanySettingsOptional()?.settings ?? company;
 
@@ -46,6 +47,16 @@ export function DocumentEditor({ record, initialType }: Props) {
   const isQuote = state.type === 'quotation';
   const totals = useMemo(() => previewTotals(state), [state]);
   const patch = (p: Partial<EditorState>) => { setState((s) => ({ ...s, ...p })); setNotice(''); };
+  // Auto-save after the user stops typing (invoices & quotations).
+  useEffect(() => {
+    if (!dirty) { setAutoSaveStatus('idle'); return; }
+    const { draft, problems: parseProblems } = stateToDraft(state);
+    const found = [...parseProblems, ...validateDraft(normalizeDraft(draft))];
+    if (found.length) { setAutoSaveStatus('idle'); return; }
+    setAutoSaveStatus('saving');
+    const t = setTimeout(() => { void save(); }, 1200);
+    return () => clearTimeout(t);
+  }, [state]);
 
   useEffect(() => { repo.listCustomers().then(setCustomers, () => undefined); }, [repo]);
 
@@ -104,15 +115,17 @@ export function DocumentEditor({ record, initialType }: Props) {
   async function save() {
     const { draft, problems: parseProblems } = stateToDraft(state);
     const found = [...parseProblems, ...validateDraft(normalizeDraft(draft))];
-    if (found.length) { setProblems([...new Set(found)]); return; }
-    setBusy(true); setProblems([]); setNotice('');
+    if (found.length) { setProblems([...new Set(found)]); setAutoSaveStatus('error'); return; }
+    setBusy(true); setProblems([]); setNotice(''); setAutoSaveStatus('saving');
     try {
       const rec = await repo.saveDocument({ id: saved?.id, expectedVersion: saved?.version, draft });
       const next = stateFromRecord(rec);
       setSaved(rec); setState(next); setBaseline(JSON.stringify(next));
       setNotice(`Saved ${rec.number} (version ${rec.version}).`);
+      setAutoSaveStatus('saved');
       if (isNew) navigate(`/documents/${rec.id}`, { replace: true });
     } catch (e) {
+      setAutoSaveStatus('error');
       if (e instanceof ValidationError) setProblems(e.problems);
       else if (e instanceof DuplicateNumberError || e instanceof VersionConflictError) setProblems([e.message]);
       else if (e instanceof NotAuthenticatedError) setProblems(['You are not signed in. Sign in again, then retry. Nothing was saved.']);
@@ -180,6 +193,9 @@ export function DocumentEditor({ record, initialType }: Props) {
           <button className="btn" onClick={() => void onWhatsApp()} disabled={outputBlocked} title={outputHint ?? 'Send the PDF on WhatsApp'}><MessageCircle size={15} aria-hidden /> WhatsApp</button>
           {!isNew && <button className="btn text-red-700" onClick={() => void moveToTrash()} disabled={busy} title="Move to trash (recoverable)"><Trash2 size={15} aria-hidden /> Move to trash</button>}
           <button className="btn btn-primary" onClick={save} disabled={busy || (!isNew && !dirty)}><Save size={15} aria-hidden /> {busy ? 'Saving...' : 'Save'}</button>
+          <span className="ml-2 text-xs text-slate-500" aria-live="polite">
+            {autoSaveStatus === 'saving' ? 'Auto-saving…' : autoSaveStatus === 'saved' ? 'Auto-saved' : autoSaveStatus === 'error' ? 'Not saved' : ''}
+          </span>
         </div>
       </div>
 
