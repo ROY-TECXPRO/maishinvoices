@@ -38,6 +38,7 @@ export function DocumentEditor({ record, initialType }: Props) {
   const [problems, setProblems] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
+  const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
   const [recentItems, setRecentItems] = useState<{ description: string; unitPriceCents: number }[]>([]);
   const companyName = useCompanySettingsOptional()?.settings ?? company;
 
@@ -46,6 +47,23 @@ export function DocumentEditor({ record, initialType }: Props) {
   const isQuote = state.type === 'quotation';
   const totals = useMemo(() => previewTotals(state), [state]);
   const patch = (p: Partial<EditorState>) => { setState((s) => ({ ...s, ...p })); setNotice(''); };
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(`draft:${saved?.id ?? 'new:' + initialType}`);
+      if (raw) {
+        const parsed = JSON.parse(raw) as EditorState;
+        setState(parsed);
+      }
+    } catch { /* ignore */ }
+  }, []);
+  useEffect(() => {
+    setAutoSaveStatus('saving');
+    const t = setTimeout(() => {
+      try { localStorage.setItem(`draft:${saved?.id ?? 'new:' + initialType}`, JSON.stringify(state)); setAutoSaveStatus('saved'); }
+      catch { setAutoSaveStatus('idle'); }
+    }, 1200);
+    return () => clearTimeout(t);
+  }, [state]);
 
   useEffect(() => { repo.listCustomers().then(setCustomers, () => undefined); }, [repo]);
 
@@ -180,6 +198,7 @@ export function DocumentEditor({ record, initialType }: Props) {
           <button className="btn" onClick={() => void onWhatsApp()} disabled={outputBlocked} title={outputHint ?? 'Send the PDF on WhatsApp'}><MessageCircle size={15} aria-hidden /> WhatsApp</button>
           {!isNew && <button className="btn text-red-700" onClick={() => void moveToTrash()} disabled={busy} title="Move to trash (recoverable)"><Trash2 size={15} aria-hidden /> Move to trash</button>}
           <button className="btn btn-primary" onClick={save} disabled={busy || (!isNew && !dirty)}><Save size={15} aria-hidden /> {busy ? 'Saving...' : 'Save'}</button>
+          <span className="ml-2 text-xs text-slate-500" aria-live="polite">{autoSaveStatus === 'saving' ? 'Auto-saving…' : autoSaveStatus === 'saved' ? 'Auto-saved' : ''}</span>
         </div>
       </div>
 
